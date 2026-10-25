@@ -1,0 +1,136 @@
+import cv2
+import numpy as np
+import json
+import os
+import mediapipe as mp
+import tkinter as tk
+from tkinter import filedialog
+
+def load_3dequalizer_camera():
+    """
+    3DEqualizer ki .py camera file select karne ke liye pop-up kholta hai.
+    """
+    root = tk.Tk()
+    root.withdraw()
+    
+    print("Please select your 3DEqualizer camera .py file...")
+    py_file_path = filedialog.askopenfilename(
+        title="Select 3DEqualizer Camera .py File",
+        filetypes=[("Python Files", "*.py"), ("All Files", "*.*")]
+    )
+    
+    if not py_file_path:
+        print("Koi camera file select nahi ki gayi.")
+        return None
+        
+    print(f"Loaded 3DEqualizer Camera File: {py_file_path}")
+    return py_file_path
+
+def run_body_tracker(video_path):
+    # Step 1: 3DEqualizer Camera file load karein
+    cam_py_path = load_3dequalizer_camera()
+
+    # Step 2: Initialize MediaPipe Pose Model
+    mp_pose = mp.solutions.pose
+    pose = mp_pose.Pose(
+        static_image_mode=False,
+        model_complexity=1,
+        smooth_landmarks=True,
+        min_detection_confidence=0.5,
+        min_tracking_confidence=0.5
+    )
+    mp_drawing = mp.solutions.drawing_utils
+
+    # Step 3: Video Capture Setup
+    cap = cv2.VideoCapture(video_path)
+    if not cap.isOpened():
+        print(f"Error: Video open nahi ho payi: {video_path}")
+        return
+
+    frame_count = int(cap.get(cv2.CAP_PROP_FRAME_COUNT))
+    print(f"Processing video with MediaPipe Pose across {frame_count} frames...")
+
+    base_dir = os.path.dirname(video_path)
+    img_seq_dir = os.path.join(base_dir, "image_sequence")
+    os.makedirs(img_seq_dir, exist_ok=True)
+
+    window_name = "ML Body Tracking Pipeline - 3DEQ + MediaPipe"
+    cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+    cv2.resizeWindow(window_name, 1280, 720)
+
+    body_tracks = {}
+    frame_idx = 0
+
+    while cap.isOpened():
+        ret, frame = cap.read()
+        if not ret:
+            break
+
+        display_frame = cv2.resize(frame, (1280, 720))
+        
+        # Maya ke liye image sequence save karein
+        img_name = f"frame_{frame_idx:04d}.png"
+        cv2.imwrite(os.path.join(img_seq_dir, img_name), display_frame)
+
+        # MediaPipe RGB image maangta hai, isliye color convert karein
+        image_rgb = cv2.cvtColor(display_frame, cv2.COLOR_BGR2RGB)
+        image_rgb.flags.writeable = False
+        
+        # Pose detection run karein
+        results = pose.process(image_rgb)
+        
+        image_rgb.flags.writeable = True
+        frame_joints = []
+
+        if results.pose_landmarks:
+            # Screen par joints draw karein
+            mp_drawing.draw_landmarks(
+                display_frame, 
+                results.pose_landmarks, 
+                mp_pose.POSE_CONNECTIONS,
+                mp_drawing.DrawingSpec(color=(0, 255, 0), thickness=2, circle_radius=2),
+                mp_drawing.DrawingSpec(color=(0, 0, 255), thickness=2, circle_radius=2)
+            )
+
+            # Har ek landmark (joint) ka pixel coordinate nikal kar save karein
+            h, w, _ = display_frame.shape
+            for idx, landmark in enumerate(results.pose_landmarks.landmark):
+                x_pixel = landmark.x * w
+                y_pixel = landmark.y * h
+                z_depth = landmark.z  # Relative depth estimation from MediaPipe
+                
+                frame_joints.append({
+                    "joint_id": int(idx),
+                    "name": mp_pose.PoseLandmark(idx).name,
+                    "x": float(x_pixel),
+                    "y": float(y_pixel),
+                    "z": float(z_depth)
+                })
+
+        body_tracks[str(frame_idx)] = frame_joints
+
+        cv2.imshow(window_name, display_frame)
+        frame_idx += 1
+
+        # 'q' ya 'x' dabakar band karne ke liye
+        key = cv2.waitKey(30) & 0xFF
+        if key == ord('q') or key == ord('x'):
+            break
+
+        if cv2.getWindowProperty(window_name, cv2.WND_PROP_VISIBLE) < 1:
+            break
+
+    cap.release()
+    cv2.destroyAllWindows()
+
+    # Step 4: Body Tracking Data ko JSON format mein save karein
+    output_json_path = os.path.join(base_dir, "body_tracking_data.json")
+    with open(output_json_path, "w") as f:
+        json.dump(body_tracks, f, indent=4)
+        
+    print(f"\nML Body Tracking Complete!")
+    print(f"-> Image Sequence Saved in: {img_seq_dir}")
+    print(f"-> Body Tracking JSON Saved in: {output_json_path}")
+
+if __name__ == "__main__":
+    run_body_tracker(r"D:\test_shot\TEST_CG_SHOT_04\01.Input\test_shot.mp4")

@@ -1,0 +1,116 @@
+import maya.cmds as cmds
+import maya.api.OpenMaya as om
+from PySide6 import QtWidgets, QtCore  # Changed from PySide2 to PySide6
+import inspect
+
+class SpeedAIPro(QtWidgets.QWidget):
+    def __init__(self, parent=None):
+        # In PySide6, we ensure we grab the active window correctly
+        if parent is None:
+            parent = QtWidgets.QApplication.activeWindow()
+            
+        super(SpeedAIPro, self).__init__(parent)
+        
+        self.setWindowTitle("SpeedAI PRO (PySide6)")
+        self.setWindowFlags(QtCore.Qt.Window | QtCore.Qt.WindowStaysOnTopHint)
+        self.resize(300, 250)
+        self.init_ui()
+
+    def init_ui(self):
+        layout = QtWidgets.QVBoxLayout(self)
+        
+        # Installer Button
+        self.btn_shelf = QtWidgets.QPushButton("ADD TO CUSTOM SHELF")
+        self.btn_shelf.setStyleSheet("background-color: #34495e; color: #ecf0f1; font-weight: bold; height: 30px;")
+        self.btn_shelf.clicked.connect(self.install_to_shelf)
+        layout.addWidget(self.btn_shelf)
+        
+        layout.addWidget(QtWidgets.QLabel("-" * 46))
+
+        # Selection Logic
+        self.btn_sel = QtWidgets.QPushButton("SELECT ASSET CONTROLS")
+        self.btn_sel.setFixedHeight(35)
+        self.btn_sel.setStyleSheet("background-color: #8e44ad; color: white;")
+        self.btn_sel.clicked.connect(self.select_controls)
+        layout.addWidget(self.btn_sel)
+
+        # Live Logic
+        self.btn_live = QtWidgets.QPushButton("CONNECT LIVE SPEED")
+        self.btn_live.setFixedHeight(45)
+        self.btn_live.setStyleSheet("background-color: #27ae60; color: white; font-weight: bold;")
+        self.btn_live.clicked.connect(self.connect_live)
+        layout.addWidget(self.btn_live)
+
+        # Bake Logic
+        self.btn_bake = QtWidgets.QPushButton("FINALIZE / BAKE")
+        self.btn_bake.clicked.connect(self.finalize)
+        layout.addWidget(self.btn_bake)
+
+    def install_to_shelf(self):
+        try:
+            full_script = "import maya.cmds as cmds\n" + inspect.getsource(inspect.getmodule(self))
+        except:
+            om.MGlobal.displayError("SpeedAI: Could not capture source code automatically.")
+            return
+
+        shelf = "Custom"
+        if not cmds.shelfLayout(shelf, ex=True):
+            shelf = cmds.tabLayout("ShelfLayout", q=True, st=True)
+            
+        cmds.shelfButton(
+            p=shelf,
+            label="SpeedAI",
+            command=full_script,
+            imageOverlayLabel="SAI",
+            image="commandButton.png",
+            annotation="Launch SpeedAI PRO"
+        )
+        om.MGlobal.displayInfo(f"SpeedAI PRO added to {shelf} shelf!")
+
+    def select_controls(self):
+        sel = cmds.ls(sl=True)
+        if not sel: return
+        all_child = cmds.listRelatives(sel, ad=True, f=True, type='transform') or []
+        all_child.append(sel[0])
+        ctrls = [i for i in all_child if cmds.keyframe(i, q=True, kc=True) > 0]
+        if ctrls: cmds.select(ctrls)
+
+    def connect_live(self):
+        sel = cmds.ls(sl=True)
+        if not sel: return
+        if not cmds.objExists("SpeedAI_Driver"):
+            drv = cmds.spaceLocator(n="SpeedAI_Driver")[0]
+            cmds.addAttr(drv, ln="warpTime", at="double", k=True)
+            s, e = cmds.playbackOptions(q=True, min=True), cmds.playbackOptions(q=True, max=True)
+            cmds.setKeyframe(drv, at="warpTime", t=s, v=s)
+            cmds.setKeyframe(drv, at="warpTime", t=e, v=e)
+            
+            # Force Linear Tangents
+            cmds.keyTangent(drv, at="warpTime", itt="linear", ott="linear")
+
+        for o in sel:
+            curves = cmds.findKeyframe(o, curve=True) or []
+            for c in curves:
+                if not cmds.listConnections(f"{c}.input", s=True):
+                    cmds.connectAttr("SpeedAI_Driver.warpTime", f"{c}.input", f=True)
+        
+        cmds.select("SpeedAI_Driver")
+        cmds.evalDeferred('import maya.mel as mel; mel.eval("ControlPaneScene; graphEditor1;")')
+
+    def finalize(self):
+        sel = cmds.ls(sl=True)
+        if not sel: return
+        s, e = cmds.playbackOptions(q=True, min=True), cmds.playbackOptions(q=True, max=True)
+        cmds.bakeResults(sel, t=(s, e), sm=True)
+        for o in sel:
+            curves = cmds.findKeyframe(o, curve=True) or []
+            for c in curves:
+                try: cmds.connectAttr("time1.outTime", f"{c}.input", f=True)
+                except: pass
+        if cmds.objExists("SpeedAI_Driver"): cmds.delete("SpeedAI_Driver")
+
+if __name__ == "__main__":
+    try: speed_ai_win.close()
+    except: pass
+    speed_ai_win = SpeedAIPro()
+    speed_ai_win.show()

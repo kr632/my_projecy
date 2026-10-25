@@ -1,0 +1,14 @@
+brakets
+
+{} inset value in f string
+() call function
+{} acts as placeholder
+.format() fills it
+{} its also use in set
+
+{}	empty dict
+{1}	set
+{1: "a"}	dict
+set()	empty set
+f"{x}"	insert value
+[] List (ordered, changeable)
